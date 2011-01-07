@@ -42,3 +42,7 @@ obj-$(CONFIG_DM_RAID)	+= dm-raid.o
 ifeq ($(CONFIG_DM_UEVENT),y)
 dm-mod-objs			+= dm-uevent.o
 endif
+
+# Ignore warnings to prevent build breaks when using gcc 4.5.0
+CFLAGS_REMOVE_dm.o = -Werror
+CFLAGS_REMOVE_dm-table.o = -Werror
