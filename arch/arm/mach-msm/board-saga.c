@@ -5343,7 +5343,7 @@ static void __init saga_init(void)
 	saga_init_panel();
 	msm_init_pmic_vibrator(3000);
 }
-/*
+
 static unsigned pmem_sf_size = MSM_PMEM_SF_SIZE;
 static int __init pmem_sf_size_setup(char *p)
 {
@@ -5352,7 +5352,7 @@ static int __init pmem_sf_size_setup(char *p)
 }
 
 early_param("pmem_sf_size", pmem_sf_size_setup);
-*/
+
 static unsigned fb_size = MSM_FB_SIZE;
 static int __init fb_size_setup(char *p)
 {
@@ -5369,6 +5369,14 @@ static int __init pmem_adsp_size_setup(char *p)
 }
 early_param("pmem_adsp_size", pmem_adsp_size_setup);
 
+static unsigned pmem_audio_size = MSM_PMEM_AUDIO_SIZE;
+static int __init pmem_audio_size_setup(char *p)
+{
+	pmem_audio_size = memparse(p, NULL);
+	return 0;
+}
+early_param("pmem_audio_size", pmem_audio_size_setup);
+
 static struct memtype_reserve msm7x30_reserve_table[] __initdata = {
 	[MEMTYPE_SMI] = {
 	},
@@ -5376,10 +5384,7 @@ static struct memtype_reserve msm7x30_reserve_table[] __initdata = {
 		.flags	=	MEMTYPE_FLAGS_1M_ALIGN,
 	},
 	[MEMTYPE_EBI1] = {
-		.start	=	PMEM_KERNEL_EBI1_BASE,
-		.limit	=	PMEM_KERNEL_EBI1_SIZE,
-		.size	=	PMEM_KERNEL_EBI1_SIZE,
-		.flags	=	MEMTYPE_FLAGS_FIXED,
+		.flags	=	MEMTYPE_FLAGS_1M_ALIGN,
 	},
 };
 
@@ -5397,8 +5402,10 @@ static void __init size_pmem_device(struct android_pmem_platform_data *pdata, un
 static void __init size_pmem_devices(void)
 {
 #ifdef CONFIG_ANDROID_PMEM
-	size_pmem_device(&android_pmem_adsp_pdata, MSM_PMEM_ADSP_BASE, pmem_adsp_size);
-	/*size_pmem_device(&android_pmem_pdata, MSM_PMEM_SF_BASE, pmem_sf_size);*/
+	size_pmem_device(&android_pmem_adsp_pdata, 0, pmem_adsp_size);
+	size_pmem_device(&android_pmem_audio_pdata, 0, pmem_audio_size);
+	size_pmem_device(&android_pmem_pdata, 0, pmem_sf_size);
+	msm7x30_reserve_table[MEMTYPE_EBI1].size += PMEM_KERNEL_EBI1_SIZE;
 #endif
 }
 
@@ -5414,6 +5421,7 @@ static void __init reserve_pmem_memory(void)
 {
 #ifdef CONFIG_ANDROID_PMEM
 	reserve_memory_for(&android_pmem_adsp_pdata);
+	reserve_memory_for(&android_pmem_audio_pdata);
 	reserve_memory_for(&android_pmem_pdata);
 #endif
 }
@@ -5427,7 +5435,7 @@ static void __init msm7x30_calculate_reserve_sizes(void)
 static int msm7x30_paddr_to_memtype(unsigned int paddr)
 {
 	if (paddr < 0x40000000)
-		return MEMTYPE_EBI0;
+		return MEMTYPE_EBI1;
 	if (paddr >= 0x40000000 && paddr < 0x80000000)
 		return MEMTYPE_EBI1;
 	return MEMTYPE_NONE;
@@ -5447,13 +5455,25 @@ static void __init saga_reserve(void)
 
 static void __init saga_allocate_memory_regions(void)
 {
-	unsigned long size;
+void *addr;
+unsigned long size;
 
-	size = MSM_FB_SIZE;
-	msm_fb_resources[0].start = MSM_FB_BASE;
-	msm_fb_resources[0].end = msm_fb_resources[0].start + size - 1;
-	pr_info("allocating %lu bytes at 0x%p (0x%lx physical) for fb\n",
-		size, __va(MSM_FB_BASE), (unsigned long) MSM_FB_BASE);
+size = fb_size ? : MSM_FB_SIZE;
+addr = alloc_bootmem_align(size, 0x1000);
+msm_fb_resources[0].start = __pa(addr);
+msm_fb_resources[0].end = msm_fb_resources[0].start + size - 1;
+printk("allocating %lu bytes at %p (%lx physical) for fb\n",
+size, addr, __pa(addr));
+
+#ifdef CONFIG_MSM_V4L2_VIDEO_OVERLAY_DEVICE
+size = MSM_V4L2_VIDEO_OVERLAY_BUF_SIZE;
+addr = alloc_bootmem_align(size, 0x1000);
+msm_v4l2_video_overlay_resources[0].start = __pa(addr);
+msm_v4l2_video_overlay_resources[0].end =
+msm_v4l2_video_overlay_resources[0].start + size - 1;
+pr_debug("allocating %lu bytes at %p (%lx physical) for v4l2\n",
+size, addr, __pa(addr));
+#endif
 }
 
 static void __init saga_map_io(void)
@@ -5471,15 +5491,18 @@ static void __init saga_init_early(void)
 }
 
 static void __init saga_fixup(struct machine_desc *desc, struct tag *tags,
-								char **cmdline, struct meminfo *mi)
+                                char **cmdline, struct meminfo *mi)
 {
-	engineerid = parse_tag_engineerid(tags);
+    int mem = parse_tag_memsize((const struct tag *)tags);
+    engineerid = parse_tag_engineerid(tags);
 
-	mi->nr_banks = 2;
-	mi->bank[0].start = MSM_LINUX_BASE1;
-	mi->bank[0].size = MSM_LINUX_SIZE1 + MSM_MEM_256MB_OFFSET;
-	mi->bank[1].start = MSM_LINUX_BASE2;
-	mi->bank[1].size = MSM_LINUX_SIZE2;
+    mi->nr_banks = 2;
+    mi->bank[0].start = MSM_LINUX_BASE1;
+    mi->bank[0].size = MSM_LINUX_SIZE1;
+    mi->bank[1].start = MSM_LINUX_BASE2;
+    mi->bank[1].size = MSM_LINUX_SIZE2;
+    if (mem == 768)
+        mi->bank[0].size += MSM_MEM_256MB_OFFSET;
 }
 
 MACHINE_START(SAGA, "saga")
